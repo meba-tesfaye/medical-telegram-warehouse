@@ -1,0 +1,16 @@
+# Virtual Environment
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# Private Environment Credentials
+.env
+*.session
+*.session-journal
+
+# Local Data Lake Storage (Keep raw data local)
+data/raw/
+data/cleaned/
+data/warehouse/
+logs/
