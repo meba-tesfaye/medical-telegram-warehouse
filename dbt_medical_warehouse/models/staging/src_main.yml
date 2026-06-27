@@ -1,0 +1,8 @@
+version: 2
+
+sources:
+  - name: main
+    database: medical_warehouse
+    schema: public  # <-- Change this to public since Postgres creates tables there by default
+    tables:
+      - name: staging_telegram_alerts

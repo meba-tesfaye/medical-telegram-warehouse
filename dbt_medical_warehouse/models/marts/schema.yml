@@ -1,0 +1,15 @@
+version: 2
+
+models:
+  - name: fct_medical_alerts
+    description: "Centralized fact table containing extracted medical alerts and pricing data."
+    columns:
+      - name: alert_key
+        tests:
+          - unique
+          - not_null
+      - name: channel_key
+        tests:
+          - relationships:
+              to: ref('dim_channels')
+              field: channel_key

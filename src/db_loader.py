@@ -1,66 +1,118 @@
 import os
-import sqlite3
-import pandas as pd
+import csv
+import logging
+from datetime import datetime
+import psycopg2
+from dotenv import load_dotenv
 
-# Define paths
-CSV_FILE = "data/cleaned/cleaned_medical_data.csv"
-DB_DIR = "data/warehouse"
-DB_FILE = os.path.join(DB_DIR, "medical_warehouse.db")
+# 1. Setup Logging Production Guardrails
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("pipeline_execution.log"),
+        logging.StreamHandler()
+    ]
+)
 
-def load_to_warehouse():
-    print("🛢 Kicking off Database Ingestion Pipeline...")
-    
-    # 1. Verify clean CSV data exists
-    if not os.path.exists(CSV_FILE):
-        print(f"❌ Error: Clean data file {CSV_FILE} not found! Run transformer.py first.")
+# 2. Load environment configurations
+load_dotenv()
+
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_USER = os.getenv("DB_USER", "postgres")
+DB_PASSWORD = os.getenv("DB_PASSWORD")
+DB_NAME = os.getenv("DB_NAME", "medical_warehouse")
+DB_PORT = os.getenv("DB_PORT", "5432")
+
+def get_db_connection():
+    """Establishes a secure connection pool handshake with PostgreSQL."""
+    try:
+        conn = psycopg2.connect(
+            host=DB_HOST,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            dbname=DB_NAME,
+            port=DB_PORT
+        )
+        return conn
+    except Exception as e:
+        logging.error(f"Database connection initialization failed: {e}")
+        raise e
+
+def initialize_staging_table(cursor):
+    """Creates the raw landing layer with strict constraints."""
+    create_table_query = """
+    CREATE TABLE IF NOT EXISTS staging_telegram_alerts (
+        message_id BIGINT PRIMARY KEY,
+        channel_name VARCHAR(100) NOT NULL,
+        message_text TEXT,
+        cleaned_text TEXT,
+        extracted_price_etb NUMERIC,
+        scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    """
+    cursor.execute(create_table_query)
+
+def load_cleaned_data_to_postgres(csv_file_path):
+    """Ingests clean CSV logs and performs transactional upserts into Postgres."""
+    if not os.path.exists(csv_file_path):
+        logging.warning(f"Target payload file not found at path: {csv_file_path}. Skipping batch.")
         return
-        
-    # Read the clean data
-    df = pd.read_csv(CSV_FILE)
-    
-    # 2. Setup Warehouse Directory & Database Connection
-    os.makedirs(DB_DIR, exist_ok=True)
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    
-    # 3. Design Structured Relational Schema
-    print("📐 Constructing structured warehouse table schema...")
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS telegram_messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            message_id INTEGER UNIQUE,
-            channel TEXT,
-            message_date TEXT,
-            cleaned_text TEXT,
-            extracted_price_etb REAL,
-            has_media INTEGER,
-            image_path TEXT,
-            views INTEGER,
-            forwards INTEGER,
-            ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-    """)
-    
-    # 4. Ingest and Stream rows into SQLite
-    print(f"📥 Loading {len(df)} records into warehouse table...")
-    
-    # Convert has_media boolean explicitly to 1 or 0 for database mapping
-    df['has_media'] = df['has_media'].astype(int)
-    
-    # Use pandas to append/replace rows neatly inside the relational DB
-    df.to_sql("telegram_messages", conn, if_exists="replace", index=False)
-    
-    # Commit changes and secure verification counts
-    conn.commit()
-    
-    # Verify records exist by running a direct SQL statement
-    cursor.execute("SELECT COUNT(*) FROM telegram_messages;")
-    total_rows = cursor.fetchone()[0]
-    
-    conn.close()
-    
-    print(f"🎉 Success! Database built safely at: {DB_FILE}")
-    print(f"📊 Total verified rows active in warehouse: {total_rows}")
+
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cursor:
+            initialize_staging_table(cursor)
+            
+            # Upsert query template utilizing ON CONFLICT DO UPDATE (deduplication)
+            upsert_query = """
+            INSERT INTO staging_telegram_alerts (message_id, channel_name, message_text, cleaned_text, extracted_price_etb, scraped_at)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (message_id) 
+            DO UPDATE SET 
+                cleaned_text = EXCLUDED.cleaned_text,
+                extracted_price_etb = EXCLUDED.extracted_price_etb,
+                scraped_at = EXCLUDED.scraped_at;
+            """
+            
+            success_count = 0
+            with open(csv_file_path, mode='r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    try:
+                        # Map keys safely; handle missing pricing data cleanly
+                        price_val = row.get('extracted_price_etb') or row.get('price')
+                        if price_val == '' or price_val is None:
+                            price_val = None
+                        else:
+                            try:
+                                price_val = float(price_val)
+                            except ValueError:
+                                price_val = None
+
+                        cursor.execute(upsert_query, (
+                            int(row.get('message_id') or row.get('id')),
+                            row.get('channel_name') or row.get('channel'),
+                            row.get('message_text') or row.get('text'),
+                            row.get('cleaned_text') or row.get('cleaned'),
+                            price_val,
+                            row.get('scraped_at') or datetime.now().isoformat()
+                        ))
+                        success_count += 1
+                    except Exception as row_error:
+                        logging.error(f"Skipping corrupt record row entry: {row_error}")
+                        continue
+            
+            conn.commit()
+            logging.info(f"Successfully processed CSV batch. Ingested/Updated {success_count} rows into PostgreSQL.")
+            
+    except Exception as batch_error:
+        conn.rollback()
+        logging.error(f"Transactional batch processing failed radically. Rolled back changes. Error: {batch_error}")
+    finally:
+        conn.close()
 
 if __name__ == "__main__":
-    load_to_warehouse()
+    SAMPLE_CLEANED_DATA = "data/cleaned/cleaned_medical_data.csv"
+    logging.info("Starting Python Data Ingestion Service Engine...")
+    load_cleaned_data_to_postgres(SAMPLE_CLEANED_DATA)

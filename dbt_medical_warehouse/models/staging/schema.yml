@@ -2,12 +2,4 @@ version: 2
 
 models:
   - name: stg_telegram_messages
-    description: "Staged and cleaned medical advertisement telegram streams"
-    columns:
-      - name: message_id
-        tests:
-          - unique
-          - not_null
-      - name: channel_name
-        tests:
-          - not_null
+    description: "Cleaned base staging view of raw ingested data."
