@@ -1,19 +1,22 @@
-# Medical Telegram Data Warehouse Pipeline
+# Medical Telegram Data Warehouse & Orchestration Pipeline
 
-An end-to-end ELT (Extract, Load, Transform) data engineering pipeline designed to securely ingest medical product advertisements, pricing data, and engagement metrics from target Telegram channels, clean the unstructured text, and warehouse it into a queryable PostgreSQL dimensional data mart using dbt.
+An end-to-end data engineering, computer vision, and automated orchestration pipeline built to securely ingest medical product data from target Ethiopian Telegram channels, enrich visual content using machine learning, transform unstructured telemetry into a queryable relational Star Schema, and expose analytic datasets via a production API layer.
 
 ---
 
 ## 🏗 Data Architecture Flow
 
-1. **Extract & Load (`src/`)**: 
-   * `scraper.py`: Connects via Telethon API to scrape target channels (`@CheMed123`, `@lobelia4cosmetics`, `@TikvahPharma`), saving raw payloads partitioned by date.
-   * `db_loader.py`: Connects to a local/remote PostgreSQL instance via `psycopg2` to ingest the raw staging data safely with robust error-handling safeguards.
-2. **Transform (`dbt_medical_warehouse/`)**:
-   * Uses **dbt (Data Build Tool)** to execute sequential SQL transformations directly inside PostgreSQL.
-   * Cleans messy text strings, parses currency metrics (`ETB`/`birr`), and maps data structures into an optimized **Star Schema** dimensional layer (`marts/`).
-3. **Data Quality Framework (`tests/`)**:
-   * Executes continuous automated checks via dbt testing layers (schema declarations and custom data integrity scripts) to validate strict constraints before analytical serving.
+1. **Data Ingestion & Extraction (Task 1 & 2)**: 
+   * Connects via the Telethon API (`src/scraper.py`) to extract media strings and raw message payloads from target channels (`@CheMed123`, `@lobelia4cosmetics`, `@TikvahPharma`).
+2. **Data Enrichment with YOLOv8 (Task 3)**:
+   * Deploys a **YOLOv8** computer vision pipeline (`src/yolo_detect.py`) over unstructured image binaries to identify product classifications (e.g., medical bottles) and log detection frequencies.
+3. **Staging & dbt Star Schema Transformations (Task 1 & 2)**:
+   * Batches raw rows into a localized PostgreSQL instance via `src/db_loader.py`.
+   * Leverages **dbt (Data Build Tool)** to execute staging formatting (`stg_telegram_messages`) and materialize a clean, high-performance dimensional layer (`dim_channels`, `fct_medical_alerts`, `fct_image_detections`).
+4. **Analytical Service API Layer (Task 4)**:
+   * Serves an interactive backend using **FastAPI** (`src/api_server.py`) to expose multi-dimensional warehouse assets directly over structured JSON endpoints.
+5. **Data Pipeline Orchestration (Task 5)**:
+   * Monitored entirely through a centralized **Dagster** asset lineage workflow graph (`src/orchestrator.py`), enforcing automated data quality checks and execution dependencies.
 
 ---
 
@@ -25,18 +28,22 @@ medical-telegram-warehouse/
 │   ├── raw/                  # Partitioned folders for raw media/JSON payloads
 │   └── cleaned/              # Intermediary backup tracking files
 ├── src/
-│   ├── scraper.py            # Telegram API client ingestion engine
-│   ├── transformer.py        # Python utility for local regex testing
-│   └── db_loader.py          # PostgreSQL staging data loading & upsert engine
-├── dbt_medical_warehouse/    # dbt Core Root Project
+│   ├── scraper.py            # Telegram API client ingestion engine (Task 1 & 2)
+│   ├── yolo_detect.py        # YOLOv8 object detection processing engine (Task 3)
+│   ├── db_loader.py          # PostgreSQL staging data loading engine (Task 1 & 2)
+│   ├── api_server.py         # FastAPI Analytical endpoint server (Task 4)
+│   └── orchestrator.py       # Dagster Pipeline asset orchestration graph (Task 5)
+├── dbt_medical_warehouse/    # dbt Core Root Transformation Directory
 │   ├── models/
-│   │   ├── staging/          # Staging views representing raw ingestion schemas
-│   │   └── marts/            # Production Dimensional Mart Layer (fct_ and dim_)
-│   │       └── schema.yml    # Schema test assertions (unique, not_null, constraints)
+│   │   ├── staging/          # Ingestion cleaning layer views (stg_telegram_messages)
+│   │   └── marts/            # Production Dimensional Star Schema (fct_ and dim_)
+│   │       ├── dim_channels.sql          # Master managed channel dimension entity
+│   │       ├── fct_medical_alerts.sql    # Organic vs. commercial ad telemetry metrics
+│   │       └── fct_image_detections.sql  # YOLO computer vision detection records
 │   ├── tests/                # Custom data validation SQL test scripts
 │   ├── dbt_project.yml       # dbt project architecture configs
 │   └── profiles.yml          # Warehouse connection routing profile
-├── .env                      # Database & API environment flags (Git-ignored)
-├── .gitignore                # Repository exception mappings
+├── yolov8n.pt                # Computer Vision trained threshold weights
+├── .env                      # Relational connection & system API parameters
 ├── requirements.txt          # Explicit production package dependencies
 └── README.md                 # System documentation
