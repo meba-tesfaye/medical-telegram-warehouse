@@ -2,11 +2,11 @@ medical_profile:
   outputs:
     dev:
       type: postgres
-      host: "{{ env_var('DB_HOST', 'localhost') }}"
-      user: "{{ env_var('DB_USER', 'postgres') }}"
-      pass: "{{ env_var('DB_PASSWORD', 'your_secure_password') }}"  # <-- Changed from password to pass
+      host: localhost
+      user: postgres
+      password: MyRealPassword123  # <-- Inserted your real password here
       port: 5432
-      dbname: "{{ env_var('DB_NAME', 'medical_warehouse') }}"
+      dbname: medical_warehouse
       schema: main
       threads: 4
   target: dev
